@@ -1,0 +1,354 @@
+#include <dht.h> 
+ #include <SoftwareSerial.h> 
+ #include <TinyGPSPlus.h> 
+ dht DHT; 
+ #define sensorPower 3 
+ #define sensorPin A0 
+ #define USE_ARDUINO_INTERRUPTS false  
+ #define DHT11_PIN 8 
+ #define LED_PIN 18 
+  
+ #include <PulseSensorPlayground.h> 
+  
+ const int trigPinbottom = 7; 
+ const int echoPinbottom = 6; 
+  
+ const int trigPinfront = 5; 
+ const int echoPinfront = 4;  
+  
+ int distancebottom; 
+ int distancefront; 
+  
+ int waterlevelvalue; 
+  
+ int bpm = 0 ; 
+ const int PULSE_INPUT = A1; 
+ const int THRESHOLD = 550;   // Adjust this number to avoid noise when idle 
+  
+ byte samplesUntilReport; 
+ const byte SAMPLES_PER_SERIAL_SAMPLE = 10; 
+  
+ double temperature; 
+  
+ int fsrPin = 2; 
+ int fsrReading; 
+  
+ PulseSensorPlayground pulseSensor; 
+ SoftwareSerial mySerial(9, 10); // grey yellow  
+  
+  
+ const int buzzer1 = 11; 
+ //const int buzzer2 = 12; 
+ //const int buzzer3 = 13; 
+ const int vibratormotor = 12; 
+ const int led = 13; 
+  
+ const int photoPin = A3; 
+ int light = 0 ; 
+  
+ static const int RXPin = 13, TXPin = 2; 
+ static const uint32_t GPSBaud = 9600; 
+ TinyGPSPlus gps; 
+ boolean gpsflag = false; 
+ SoftwareSerial ss(RXPin, TXPin); 
+ double latitude; 
+ double longitude; 
+  
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+  
+ void setup()  
+ { 
+   Serial.begin(9600); 
+   pinMode(trigPinbottom, OUTPUT);  
+   pinMode(echoPinbottom, INPUT); 
+   pinMode(trigPinfront, OUTPUT); 
+   pinMode(echoPinfront, INPUT); 
+    
+   pinMode(sensorPower, OUTPUT); 
+   digitalWrite(sensorPower, LOW); 
+    
+   pulseSensor.analogInput(PULSE_INPUT);   
+   pulseSensor.setSerial(Serial);   
+   pulseSensor.setThreshold(THRESHOLD); 
+   samplesUntilReport = SAMPLES_PER_SERIAL_SAMPLE; 
+    
+   if (!pulseSensor.begin()) { 
+     for(;;) { 
+     Serial.println("Issue"); 
+     } 
+   } 
+  
+   mySerial.begin(9600); 
+   Serial.println("Initializing...");  
+   delay(100); 
+   mySerial.println("AT"); //Once the handshake test is successful, it will back to OK 
+   updateSerial(); 
+   delay(100); 
+   mySerial.println("AT+CMGF=1"); // Configuring TEXT mode 
+   updateSerial(); 
+   delay(100); 
+  
+   pinMode(vibratormotor, OUTPUT); 
+   pinMode(LED_PIN, OUTPUT); 
+  
+   ss.begin(9600); 
+   delay(1000); 
+  
+ } 
+  
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+  
+ int getdistance(int trigPin , int echoPin) 
+ { 
+   long duration; 
+   int distance; 
+   digitalWrite(trigPin, LOW); 
+   delayMicroseconds(2); 
+   digitalWrite(trigPin, HIGH); 
+   delayMicroseconds(10); 
+   digitalWrite(trigPin, LOW); 
+   duration = pulseIn(echoPin, HIGH); 
+   distance= duration*0.034/2; 
+   return distance;  
+  
+ } 
+ void getdistancebottom() 
+ { 
+   distancebottom = getdistance(trigPinbottom , echoPinbottom); 
+ } 
+  
+ void getdistancefront() 
+ { 
+   distancefront = getdistance(trigPinfront , echoPinfront); 
+ } 
+  
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+  
+ void getwaterlevelvalue() 
+ { 
+   digitalWrite(sensorPower, HIGH);  
+   delay(10);              
+   waterlevelvalue = analogRead(sensorPin);    
+   digitalWrite(sensorPower, LOW);           
+ } 
+  
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+  
+ void getheartbeat() 
+ { 
+   bpm = 0; 
+   
+   while(true) 
+   { 
+     if (pulseSensor.sawNewSample())  
+     { 
+       if (--samplesUntilReport == (byte) 0)  
+       { 
+         samplesUntilReport = SAMPLES_PER_SERIAL_SAMPLE; 
+           bpm = pulseSensor.getBeatsPerMinute(); 
+           break; 
+  
+       } 
+  
+      
+     } 
+   } 
+    
+    
+ } 
+  
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+  
+ void gettemperature() 
+ { 
+   //DHT.listen(); 
+   int chk = DHT.read11(DHT11_PIN); 
+   temperature = DHT.temperature; 
+  
+ } 
+  
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+  
+ void getforce() 
+ { 
+   fsrReading = analogRead(fsrPin); 
+ } 
+  
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+ void updateSerial() 
+ { 
+   mySerial.listen(); 
+   delay(10); 
+    
+   while(mySerial.available()>0)  
+   { 
+     String sms = mySerial.readString(); 
+     Serial.println(sms.length()); 
+     if(sms.length() > 60) 
+     { 
+       sendnewmessage(); 
+     } 
+   } 
+ } 
+  
+ void checkunreadsms() 
+ { 
+   mySerial.println("AT+CMGL=\"REC UNREAD\""); 
+   updateSerial(); 
+ } 
+  
+ void sendnewmessage() 
+ { 
+       updateflag(); 
+       getcords(); 
+       delay(100); 
+       gpsflag = false; 
+       String firsthalf = "AT+CMGS=\""; 
+       String secondhalf = "+919284833611"; 
+       String last = "\"\r"; 
+       String finalstring = firsthalf+secondhalf+last; 
+       Serial.println(finalstring); 
+        
+       mySerial.println(finalstring); // Replace x with mobile number 
+       delay(1000); 
+       mySerial.print("https://www.google.com/maps/?q="); 
+       mySerial.print(latitude, 6); 
+       mySerial.print(","); 
+       mySerial.print(longitude, 6); 
+        
+       mySerial. println((char)26);// ASCII code of CTRL+Z for saying the end of sms to  the module  
+       delay(1000); 
+       Serial.println("done"); 
+ } 
+  
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+  
+ void getlight() 
+ { 
+   light = analogRead(photoPin); 
+ } 
+  
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+ void updateflag() 
+ { 
+   delay(100); 
+   ss.listen(); 
+   delay(100); 
+   while(!gpsflag) 
+   { 
+     while (ss.available() > 0) 
+     { 
+       if (gps.encode(ss.read())) 
+       {  
+         gpsflag = true; 
+       } 
+     } 
+  
+     if (millis() > 5000 && gps.charsProcessed() < 10) 
+     { 
+       Serial.println(F("No GPS detected: check wiring.")); 
+        gpsflag = false; 
+     } 
+   } 
+ } 
+  
+ void getcords() 
+ { 
+  
+   if(gpsflag) 
+   { 
+         Serial.print(F("Location: "));  
+         if (gps.location.isValid()) 
+         { 
+              
+             latitude = gps.location.lat(); 
+             longitude = gps.location.lng(); 
+             Serial.println(latitude , 6); 
+             Serial.println(longitude , 6); 
+         } 
+         else 
+         { 
+             //message = "INVALID"; 
+             Serial.println("INVALID"); 
+         } 
+   } 
+   else 
+   { 
+     Serial.print("Location bad: "); 
+     //message = "Something went wrong"; 
+   } 
+  
+  
+ } 
+ //-----------------------------------------------------------------------------------------------------------------------------------------------------// 
+ void loop()  
+ { 
+   getdistancebottom(); 
+   Serial.print("Bottom Distance: "); 
+   Serial.println(distancebottom); 
+   if(distancebottom > 20) 
+   { 
+     tone(buzzer1,500); 
+     delay(100); 
+     noTone(buzzer1); 
+   } 
+  
+    
+   getdistancefront(); 
+   Serial.print("Front Distance: "); 
+   Serial.println(distancefront); 
+     if(distancefront < 15) 
+   { 
+    digitalWrite(vibratormotor, HIGH);  
+    delay(100); 
+    digitalWrite(vibratormotor, LOW);  
+   } 
+  
+  
+   getwaterlevelvalue(); 
+   Serial.print("Water level Value: "); 
+   Serial.println(waterlevelvalue); 
+   if(waterlevelvalue > 300) 
+   { 
+     Serial.println("WATER"); 
+       tone(buzzer1,200); 
+       delay(100); 
+       noTone(buzzer1); 
+   } 
+ //  
+ // 
+   gettemperature(); 
+   Serial.print("Temprature: "); 
+   Serial.println(temperature); 
+   if(temperature > 45) 
+   { 
+     tone(buzzer1,1000); 
+     delay(100); 
+     noTone(buzzer1); 
+   } 
+ // 
+   getheartbeat(); 
+   Serial.print("Bpm: "); 
+   Serial.println(bpm); 
+   bpm = 0; 
+ // 
+   getforce(); 
+   Serial.print("Force reading = "); 
+   Serial.println(fsrReading); 
+  
+   getlight(); 
+   Serial.print("Light reading = "); 
+   Serial.println(light); 
+   if(light<=10) 
+   { 
+     digitalWrite(LED_PIN, HIGH); 
+  
+   } 
+   else if(light>20) 
+   { 
+     digitalWrite(LED_PIN, LOW); 
+   } 
+  
+   checkunreadsms(); 
+   Serial.println(); 
+ }
